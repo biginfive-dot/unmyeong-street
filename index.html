@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>어반 로어: 운명의 거리 — 프로토타입 v0.6</title>
+<title>어반 로어: 운명의 거리 — 프로토타입 v0.7</title>
 <style>
 :root { color-scheme: light; }
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -146,7 +146,7 @@ small.ver{ display:block; text-align:center; color:#5b5568; font-size:10px; padd
     <button class="subBtn" id="coinBtn">🪙 <b id="coinTxt">0</b></button>
   </div>
   <div id="log"></div>
-  <small class="ver">어반 로어: 운명의 거리 — 프로토타입 v0.6 · 20 스테이지 · BIGINFIVE</small>
+  <small class="ver">어반 로어: 운명의 거리 — 프로토타입 v0.7 · 20 스테이지 · BIGINFIVE</small>
   <div id="ovl"><div id="ovlBox"></div></div>
 </div>
 <script>
@@ -225,13 +225,16 @@ const FATE_TIERS = [
 const ROWS=4,COLS=5,N=20;
 
 let S=null;
+const CHAPTER_BOSS=[5,10,15];   // 20은 최종(게임 끝) — 리셋 대상 아님
+function baseDeck(ch){ return ["sword","sword","shield","shield","cherry","cherry","clover",ch.sig].map(k=>({k,sig:k===ch.sig})); }
 function newRun(charIdx){
   const ch=CHARS[charIdx];
   S={ char:ch, hp:30, maxHp:30, block:0, carryBlock:false, coins:10, gauge:0,
-    deck:["sword","sword","shield","shield","cherry","cherry","clover",ch.sig].map(k=>({k,sig:k===ch.sig})),
+    deck:baseDeck(ch),
     stage:1, enemies:[], reflect:0, reflectPsn:false,
     bank:0, rerollTokens:0, shopFree:false, draft4:false, fatePlan:null, bossRule:null, bossRuleUsed:false,
     badges:[], pinTokens:1, pin:null, turn:0, psnHold:false,
+    focus:null, banned:[],
     stats:{turns:0,dmg:0,best:0,patterns:0,fateTry:0,fateWin:0,merges:0,stagesCleared:0},
     cells:[], phase:"spin" };
   startStage();
@@ -585,7 +588,13 @@ async function winStage(){
   log(`<span class="good">✔ 스테이지 ${S.stage} 클리어!</span>`); await sleep(500);
   if(S.stage>=20){ gameOver(true); return; }
   S.coins+=8+S.stage*2; log(`보상: 코인 +${8+S.stage*2}`);
+  const chapterCleared=CHAPTER_BOSS.includes(S.stage);
   S.stage++;
+  if(chapterCleared){
+    S.deck=baseDeck(S.char); S.focus=null; S.banned=[]; S.pin=null; S.bank=0;
+    log(`<span class="hl">🔄 챕터 클리어 — 덱이 시작 덱으로 리셋됐다. (배지·코인·게이지·성장은 유지) 새 빌드를 시작하자!</span>`);
+    await sleep(400);
+  }
   openShop();
 }
 function gameOver(win){
@@ -599,9 +608,13 @@ function gameOver(win){
     <div class="rowbtns"><button class="primary" onclick="UI.restart()">다시 도전 (캐릭터 선택)</button></div>`);
 }
 
-function rollKind(){ const ks=Object.keys(KINDS).filter(k=>KINDS[k].cat!=="curse");
-  const tw=ks.reduce((s,k)=>s+CATS[KINDS[k].cat].w,0); let r=Math.random()*tw;
-  for(const k of ks){ r-=CATS[KINDS[k].cat].w; if(r<=0)return k; } return ks[0]; }
+const FOCUS_MULT=3.2;   // 집중 계열 출현 가중치 배수
+function catWeight(c){ if(S&&S.banned&&S.banned.includes(c))return 0; let w=CATS[c].w; if(S&&S.focus===c)w*=FOCUS_MULT; return w; }
+function rollKind(){ let ks=Object.keys(KINDS).filter(k=>KINDS[k].cat!=="curse"&&catWeight(KINDS[k].cat)>0);
+  if(!ks.length) ks=Object.keys(KINDS).filter(k=>KINDS[k].cat!=="curse");
+  const wt=k=>Math.max(0.0001,catWeight(KINDS[k].cat));
+  const tw=ks.reduce((s,k)=>s+wt(k),0); let r=Math.random()*tw;
+  for(const k of ks){ r-=wt(k); if(r<=0)return k; } return ks[0]; }
 function kindOptHtml(k,extra){ const kd=KINDS[k],cat=CATS[kd.cat];
   return `<span class="em">${kd.em}</span><span><span class="tt"><span class="catdot" style="background:${cat.color}"></span>${kd.name} <small style="color:${cat.color}">${cat.name}</small></span><div class="dd">${kd.desc}</div></span>${extra||""}`; }
 function openDraft(){ const nOpt=S.draft4?4:3; S.draft4=false; const opts=[...Array(nOpt)].map(()=>rollKind());
@@ -620,6 +633,7 @@ function openShop(){ if(!S._shopOffers) S._shopOffers=[...Array(4)].map(()=>roll
   if(S._shopBadge&&!S.badges.includes(S._shopBadge)){ const bd=BADGES[S._shopBadge];
     html+=`<div class="opt" onclick="UI.buyBadge()"><span class="em">${bd.em}</span><span><span class="tt">${bd.name} <small style="color:#b69ae0">배지</small></span><div class="dd">${bd.desc}</div></span><span class="pr">🪙10</span></div>`; }
   html+=`<div class="opt" onclick="UI.buyPin()"><span class="em">📌</span><span><span class="tt">고정 토큰 <small style="color:#b69ae0">보유 ${S.pinTokens}</small></span><div class="dd">다음 스핀에서 심볼 1개를 원하는 칸에</div></span><span class="pr">🪙4</span></div>`;
+  html+=`<div class="opt" onclick="UI.openBuild()"><span class="em">🎯</span><span><span class="tt">덱 빌드 — 집중 / 봉인 <small style="color:#b69ae0">확률 조작</small></span><div class="dd">${buildStatusText()}</div></span><span class="pr">🪙6 / 4</span></div>`;
   html+=`<div class="rowbtns">
     <button onclick="UI.shopReroll()">🔄 리롤 (3)</button>
     <button onclick="UI.openDelete()">🗑️ 삭제 (5·악몽8)</button>
@@ -627,6 +641,23 @@ function openShop(){ if(!S._shopOffers) S._shopOffers=[...Array(4)].map(()=>roll
     <button onclick="UI.openCharSwap()">🧙 캐릭터</button>
     <button class="primary" onclick="UI.leaveShop()">다음 스테이지 →</button></div>`;
   ovl(html); }
+function buildStatusText(){ const f=S.focus?`<span style="color:${CATS[S.focus].color}">🎯${CATS[S.focus].name}↑</span>`:"집중 없음";
+  const b=S.banned.length?S.banned.map(c=>`<span style="color:#ff8a8a">🚫${CATS[c].name}</span>`).join(" "):"봉인 없음";
+  return `현재: ${f} · ${b}`; }
+function openBuild(){
+  let html=`<h2>🎯 덱 빌드 — 확률 조작</h2><div class="sub2">집중한 계열은 카드·상점 출현율↑(나머지↓), 봉인한 계열은 풀에서 제외. ${buildStatusText()}</div>`;
+  const cats=Object.keys(CATS);
+  cats.forEach(c=>{ const cd=CATS[c]; const isF=S.focus===c, isB=S.banned.includes(c);
+    let actions="";
+    if(isF) actions+=`<button onclick="UI.clearFocus()" style="background:#3a3347">집중 해제</button>`;
+    else if(!isB) actions+=`<button onclick="UI.setFocus('${c}')">🎯 집중 (🪙6)</button>`;
+    if(isB) actions+=`<button onclick="UI.unban('${c}')" style="background:#3a3347">봉인 해제</button>`;
+    else if(!isF) actions+=`<button onclick="UI.ban('${c}')">🚫 봉인 (🪙4)</button>`;
+    html+=`<div class="opt" style="cursor:default"><span class="em" style="font-size:20px"><span class="catdot" style="width:14px;height:14px;background:${cd.color}"></span></span><span style="flex:1"><span class="tt">${cd.name} <small style="color:${cd.color}">기본 가중치 ${cd.w}${isF?" · 집중 중":""}${isB?" · 봉인됨":""}</small></span></span><span style="display:flex;gap:6px">${actions}</span></div>`;
+  });
+  html+=`<div class="rowbtns"><button class="primary" onclick="UI.backShop()">← 상점</button></div>`;
+  ovl(html);
+}
 function fateMenu(){ const sunny=S.char.id==="sunny"; const top=topCategory(); const topCnt=S.deck.filter(e=>KINDS[e.k].cat===top).length;
   let html=`<h2>🖐️ 운명의 손</h2><div class="sub2">게이지를 태워 <b>다음 스핀</b>에서 최다 계열(${CATS[top].name} ${topCnt}개)을 목표 문양으로 끌어당깁니다. 확률형 — 실패 시 절반 환불 + 부분 문양.</div>`;
   FATE_TIERS.forEach((t,i)=>{ const cost=t.cost-(sunny?2:0); const ok=S.gauge>=cost&&topCnt>=t.size; const sr=topCnt>=t.size?estimateFate(t,S.deck):0;
@@ -646,6 +677,13 @@ const UI={
   shopReroll(){ if(S.coins<3){log("코인이 부족하다…");return;} S.coins-=3; S._shopOffers=[...Array(4)].map(()=>rollKind()); S._shopBadge=null; openShop(); },
   buyBadge(){ if(!S._shopBadge)return; if(S.coins<10){log("코인이 부족하다…");return;} S.coins-=10; S.badges.push(S._shopBadge); log(`배지: ${BADGES[S._shopBadge].name}`); S._shopBadge=null; openShop(); },
   buyPin(){ if(S.coins<4){log("코인이 부족하다…");return;} S.coins-=4; S.pinTokens++; openShop(); },
+  openBuild(){ openBuild(); },
+  setFocus(c){ if(S.focus===c)return; if(S.coins<6){log("코인이 부족하다…");return;} S.coins-=6; if(S.banned.includes(c))S.banned=S.banned.filter(x=>x!==c); S.focus=c; log(`🎯 ${CATS[c].name} 집중! 출현율↑`); openBuild(); },
+  clearFocus(){ S.focus=null; log("집중 해제"); openBuild(); },
+  ban(c){ if(S.focus===c){log("집중 중인 계열은 봉인할 수 없다.");return;}
+    const avail=Object.keys(CATS).filter(x=>!S.banned.includes(x)).length; if(avail<=3){log("계열을 너무 많이 봉인할 순 없다 (최소 3계열 유지).");return;}
+    if(S.coins<4){log("코인이 부족하다…");return;} S.coins-=4; S.banned.push(c); log(`🚫 ${CATS[c].name} 봉인 — 풀에서 제외`); openBuild(); },
+  unban(c){ S.banned=S.banned.filter(x=>x!==c); log(`${CATS[c].name} 봉인 해제`); openBuild(); },
   rest(){ if(S._rested){log("이번 정비엔 이미 쉬었다.");return;} S._rested=true; S.hp=Math.min(S.maxHp,S.hp+8); log("⛺ 휴식 — HP +8"); openShop(); },
   openDelete(){ let html=`<h2>🗑️ 심볼 삭제</h2><div class="sub2">덱에서 1개 제거 (꽝 가능)</div>`;
     S.deck.forEach((e,i)=>{ const kd=KINDS[e.k]; html+=`<div class="opt" onclick="UI.del(${i})"><span class="em">${kd.em}</span><span class="tt">${kd.name}${e.sig?" ★":""}</span></div>`; });
@@ -668,13 +706,13 @@ const UI={
 window.UI=UI;
 
 function openCharSelect(){
-  let html=`<h2>어반 로어: 운명의 거리</h2><div class="sub2">프로토타입 v0.6 — 스테이지 1~20<br>
+  let html=`<h2>어반 로어: 운명의 거리</h2><div class="sub2">프로토타입 v0.7 — 스테이지 1~20<br>
   <b>규칙:</b> 같은 계열끼리 붙어야 발동 · 계열 일렬=문양(배수) · 같은 심볼 3개=강화, 4개=각성 · 불발은 게이지로!</div>
   <div style="font-size:13px;margin-bottom:8px;color:#fff">조사반 캐릭터를 선택하세요:</div>`;
   CHARS.forEach((c,i)=>{ html+=`<div class="opt" onclick="UI._start(${i})"><span class="em">${["📓","🍒","⚔️","🎲"][i]}</span><span><span class="tt">${c.name} <small>(${c.team}팀)</small></span><div class="dd">${c.trait}<br>시그니처: ${c.sigName} (${KINDS[c.sig].name} 계열)</div></span></div>`; });
   ovl(html);
 }
-function openHelp(){ ovl(`<h2>📖 규칙 요약 (v0.6)</h2>
+function openHelp(){ ovl(`<h2>📖 규칙 요약 (v0.7)</h2>
   <div class="opt" style="cursor:default;display:block;font-size:12.5px;line-height:1.7">
   ① <b>같은 계열이 상하좌우로 붙어야 발동.</b> 다른 계열 옆=고립 불발 → 운명 게이지 +1<br>
   ② <b>문양:</b> 같은 계열 3/4/5연속 = ×1.5/×2/×3 · 결계(테두리) ×7 · 대공명(전체) ×10<br>
@@ -682,7 +720,9 @@ function openHelp(){ ovl(`<h2>📖 규칙 요약 (v0.6)</h2>
   ④ <b>운명의 손:</b> 게이지 10/16/22로 오연·결계·대공명 도전 (확률·실패 시 절반 환불)<br>
   ⑤ <b>다수 적:</b> 공격은 맨 앞(▼) 적부터. 모두 처치하면 스테이지 클리어<br>
   ⑥ 매 턴 카드 1장, 스테이지 사이 상점(물가는 거리당 +20%) · 보스(5/10/15/20)는 괴담 규칙을 건다<br>
-  ⑦ <b>저주:</b> 꽝❌ 절단 · 균열🕳️ 위력-1 · 안개🌫️ 문양무효 · 악몽😱 HP-1</div>
+  ⑦ <b>덱 빌드:</b> 상점 🎯집중(한 계열 출현↑)·🚫봉인(계열 제외)으로 원하는 빌드를 노린다<br>
+  ⑧ <b>챕터 리셋:</b> 챕터 보스(5·10·15)를 깨면 덱이 시작 덱으로 리셋 — 매 챕터 새 빌드 (배지·코인·게이지·성장은 유지)<br>
+  ⑨ <b>저주:</b> 꽝❌ 절단 · 균열🕳️ 위력-1 · 안개🌫️ 문양무효 · 악몽😱 HP-1</div>
   <div class="rowbtns"><button class="primary" onclick="UI.close()">닫기</button></div>`); }
 function openPin(){
   if(S.pinTokens<=0){ ovl(`<h2>📌 고정 토큰</h2><div class="sub2">토큰이 없다. 상점에서 4코인.</div><div class="rowbtns"><button class="primary" onclick="UI.close()">닫기</button></div>`); return; }
@@ -721,6 +761,8 @@ function renderBoard(active,misfires,mult,pats){
 }
 function renderDeck(){ const el=document.getElementById("deckList"); if(!el||!S)return; const cnt={};
   S.deck.forEach(e=>{cnt[e.k]=(cnt[e.k]||0)+1;}); el.innerHTML="";
+  if(S.focus||S.banned.length){ const st=document.createElement("div"); st.style.cssText="flex-basis:100%;font-size:10px;color:#a89dc4;margin-bottom:3px;";
+    st.innerHTML=(S.focus?`<span style="color:${CATS[S.focus].color}">🎯${CATS[S.focus].name}</span> `:"")+S.banned.map(c=>`<span style="color:#ff8a8a">🚫${CATS[c].name}</span>`).join(" "); el.appendChild(st); }
   Object.entries(cnt).forEach(([k,n])=>{ const c=document.createElement("div"); c.className="dchip"; c.title=KINDS[k].name; c.innerHTML=`${KINDS[k].em}<small>${n}</small>`; el.appendChild(c); }); }
 function renderEnemies(){ const host=document.getElementById("enemies"); if(!host)return; host.innerHTML="";
   const front=frontIdx();
